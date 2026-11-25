@@ -1,0 +1,588 @@
+<!DOCTYPE html>
+<html lang="zh-CN">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>HOS-Scrcpy 鸿蒙纯血极速投屏</title>
+    <style>
+        * {
+            box-sizing: border-box;
+            margin: 0;
+            padding: 0;
+            user-select: none;
+        }
+        body {
+            background-color: #0b0f14;
+            color: #c9d1d9;
+            font-family: -apple-system, BlinkMacSystemFont, "Segoe UI", Roboto, Helvetica, Arial, sans-serif;
+            display: flex;
+            align-items: center;
+            justify-content: center;
+            height: 100vh;
+            width: 100vw;
+            overflow: hidden;
+        }
+        #container {
+            position: relative;
+            display: flex;
+            flex-direction: row;
+            align-items: stretch;
+            background: #161b22;
+            width: 100vw;
+            height: 100vh;
+            overflow: hidden;
+        }
+        #video-wrapper {
+            position: relative;
+            flex: 1;
+            height: 100%;
+            display: flex;
+            align-items: center;
+            justify-content: center;
+            background: #000;
+            overflow: hidden;
+            min-width: 0;
+            min-height: 0;
+        }
+        video {
+            display: block;
+            max-height: 100%;
+            max-width: 100%;
+            width: auto;
+            height: auto;
+            cursor: pointer;
+            object-fit: contain;
+            background: #000;
+        }
+        #right-toolbar {
+            width: 42px;
+            height: 100%;
+            background: #161b22;
+            border-left: 1px solid #30363d;
+            display: flex;
+            flex-direction: column;
+            align-items: center;
+            justify-content: space-evenly;
+            padding: 4px 0;
+            z-index: 10;
+            flex-shrink: 0;
+        }
+        .tool-btn {
+            background: transparent;
+            border: 1px solid transparent;
+            color: #8b949e;
+            width: 34px;
+            height: 34px;
+            border-radius: 7px;
+            cursor: pointer;
+            display: flex;
+            flex-direction: column;
+            align-items: center;
+            justify-content: center;
+            font-size: 14px;
+            transition: all 0.15s ease;
+            position: relative;
+        }
+        .tool-btn:hover {
+            color: #58a6ff;
+            background: rgba(88, 166, 255, 0.15);
+            border-color: rgba(88, 166, 255, 0.3);
+        }
+        .tool-btn:active {
+            transform: scale(0.9);
+        }
+        .tool-btn .btn-badge {
+            font-size: 8.5px;
+            font-weight: 700;
+            color: #79c0ff;
+            line-height: 1;
+            margin-top: 1px;
+        }
+        .divider {
+            width: 24px;
+            height: 1px;
+            background: #30363d;
+            margin: 2px 0;
+        }
+        #status-bar {
+            position: absolute;
+            top: 10px;
+            left: 10px;
+            background: rgba(16, 22, 30, 0.85);
+            backdrop-filter: blur(8px);
+            border: 1px solid rgba(255, 255, 255, 0.1);
+            padding: 4px 10px;
+            border-radius: 20px;
+            font-size: 11px;
+            display: flex;
+            align-items: center;
+            gap: 6px;
+            pointer-events: none;
+            z-index: 100;
+        }
+        .dot {
+            width: 7px;
+            height: 7px;
+            border-radius: 50%;
+            background: #f85149;
+        }
+        .dot.live {
+            background: #2ea043;
+            box-shadow: 0 0 8px #2ea043;
+        }
+        #toast {
+            position: absolute;
+            bottom: 24px;
+            left: 50%;
+            transform: translateX(-50%);
+            background: rgba(0, 0, 0, 0.88);
+            border: 1px solid #30363d;
+            color: #58a6ff;
+            padding: 6px 14px;
+            border-radius: 6px;
+            font-size: 12px;
+            opacity: 0;
+            transition: opacity 0.2s ease;
+            pointer-events: none;
+            z-index: 101;
+            white-space: nowrap;
+        }
+    </style>
+    <script src="/jmuxer.min.js"></script>
+</head>
+<body>
+
+<div id="container">
+    <div id="status-bar">
+        <div class="dot" id="live-dot"></div>
+        <span id="live-text">连接中...</span>
+        <span id="fps-counter" style="color: #8b949e; margin-left: 4px;"></span>
+    </div>
+
+    <div id="video-wrapper">
+        <video id="player" autoplay muted playsinline></video>
+    </div>
+
+    <!-- Right Scrcpy Utility Sidebar -->
+    <div id="right-toolbar">
+        <button class="tool-btn" id="btn-back" title="返回 (Escape / 鼠标右键)">
+            <span>⮌</span>
+            <span class="btn-badge">返回</span>
+        </button>
+        <button class="tool-btn" id="btn-home" title="主屏幕 (Home / 鼠标中键)">
+            <span>⌂</span>
+            <span class="btn-badge">主屏</span>
+        </button>
+        <button class="tool-btn" id="btn-task" title="多任务 / 最近应用">
+            <span>▢</span>
+            <span class="btn-badge">任务</span>
+        </button>
+        
+        <div class="divider"></div>
+
+        <button class="tool-btn" id="btn-vol-up" title="音量增加 (+)">
+            <span>🔊</span>
+            <span class="btn-badge">音量+</span>
+        </button>
+        <button class="tool-btn" id="btn-vol-down" title="音量减小 (-)">
+            <span>🔉</span>
+            <span class="btn-badge">音量-</span>
+        </button>
+
+        <div class="divider"></div>
+
+        <button class="tool-btn" id="btn-power" title="电源 / 唤醒屏幕">
+            <span>⏻</span>
+            <span class="btn-badge">电源</span>
+        </button>
+        <button class="tool-btn" id="btn-screenshot" title="屏幕截图并下载">
+            <span>📸</span>
+            <span class="btn-badge">截屏</span>
+        </button>
+        <button class="tool-btn" id="btn-sens" title="点击切换滑动灵敏度">
+            <span>⚡</span>
+            <span class="btn-badge" id="sens-label">1.8x</span>
+        </button>
+
+        <div class="divider"></div>
+
+        <button class="tool-btn" id="btn-idr" title="刷新关键帧 (重置清晰画质)">
+            <span>⟳</span>
+            <span class="btn-badge">刷新</span>
+        </button>
+        <button class="tool-btn" id="btn-fullscreen" title="全屏显示切换">
+            <span>⛶</span>
+            <span class="btn-badge">全屏</span>
+        </button>
+    </div>
+</div>
+
+<div id="toast"></div>
+
+<script>
+    const video = document.getElementById('player');
+    const liveDot = document.getElementById('live-dot');
+    const liveText = document.getElementById('live-text');
+    const fpsCounter = document.getElementById('fps-counter');
+    const toast = document.getElementById('toast');
+    const sensLabel = document.getElementById('sens-label');
+
+    let devWidth = 1128;
+    let devHeight = 2444;
+    let ws = null;
+    let jmuxer = null;
+    let frameCount = 0;
+    let lastFpsTime = performance.now();
+
+    // Sensitivity presets (1.0x = exact Android Scrcpy 1:1 tracking, higher = boost on small windows)
+    const sensPresets = [1.0, 1.2, 1.5, 2.0, 2.5];
+    let savedSensIdx = parseInt(localStorage.getItem('hos_sens_idx') || '2', 10);
+    let sensIndex = Number.isFinite(savedSensIdx) && savedSensIdx >= 0 && savedSensIdx < sensPresets.length ? savedSensIdx : 2;
+    let sensitivity = sensPresets[sensIndex];
+    sensLabel.innerText = `${sensitivity}x`;
+
+    function showToast(msg) {
+        toast.innerText = msg;
+        toast.style.opacity = 1;
+        setTimeout(() => { toast.style.opacity = 0; }, 1800);
+    }
+
+    function initPlayer() {
+        if (jmuxer) {
+            try { jmuxer.destroy(); } catch (e) {}
+        }
+
+        jmuxer = new JMuxer({
+            node: 'player',
+            mode: 'video',
+            flushingTime: 0,
+            fps: 60,
+            clearBuffer: false,
+            debug: false
+        });
+
+        video.play().catch(() => {});
+    }
+
+    function syncVideoDimensions() {
+        if (video.videoWidth > 0 && video.videoHeight > 0) {
+            devWidth = video.videoWidth;
+            devHeight = video.videoHeight;
+        }
+    }
+    video.addEventListener('loadedmetadata', syncVideoDimensions);
+    video.addEventListener('resize', syncVideoDimensions);
+
+    let watchdogTimer = null;
+
+    function connectWs() {
+        if (watchdogTimer) clearInterval(watchdogTimer);
+        initPlayer();
+        const protocol = location.protocol === 'https:' ? 'wss:' : 'ws:';
+        ws = new WebSocket(`${protocol}//${location.host}/ws`);
+        ws.binaryType = 'arraybuffer';
+
+        ws.onopen = () => {
+            liveDot.classList.add('live');
+            liveText.innerText = '真机实时';
+            showToast('已连接 HarmonyOS NEXT 屏幕');
+            // Request fresh IDR immediately
+            try { ws.send(JSON.stringify({ type: 'requestIdr' })); } catch (e) {}
+
+            watchdogTimer = setInterval(() => {
+                if (ws && ws.readyState === WebSocket.OPEN && frameCount === 0) {
+                    ws.send(JSON.stringify({ type: 'requestIdr' }));
+                }
+            }, 1200);
+        };
+
+        ws.onmessage = (e) => {
+            if (e.data instanceof ArrayBuffer && jmuxer) {
+                frameCount++;
+                jmuxer.feed({
+                    video: new Uint8Array(e.data)
+                });
+
+                const now = performance.now();
+                if (now - lastFpsTime >= 1000) {
+                    fpsCounter.innerText = `${frameCount} FPS`;
+                    frameCount = 0;
+                    lastFpsTime = now;
+                }
+            }
+        };
+
+        ws.onclose = () => {
+            if (watchdogTimer) clearInterval(watchdogTimer);
+            liveDot.classList.remove('live');
+            liveText.innerText = '重连中...';
+            setTimeout(connectWs, 2000);
+        };
+
+        ws.onerror = (err) => {
+            console.error('WebSocket error:', err);
+        };
+    }
+
+    // Accurate coordinate mapping factoring out letterbox / pillarbox margins
+    function getActualVideoRect() {
+        const r = video.getBoundingClientRect();
+        if (!devWidth || !devHeight || !r.width || !r.height) return r;
+        const videoRatio = devWidth / devHeight;
+        const elemRatio = r.width / r.height;
+        let actualWidth = r.width;
+        let actualHeight = r.height;
+        let actualLeft = r.left;
+        let actualTop = r.top;
+
+        if (elemRatio > videoRatio) {
+            // Pillarbox: vertical bars on left & right
+            actualWidth = r.height * videoRatio;
+            actualLeft = r.left + (r.width - actualWidth) / 2;
+        } else {
+            // Letterbox: horizontal bars on top & bottom
+            actualHeight = r.width / videoRatio;
+            actualTop = r.top + (r.height - actualHeight) / 2;
+        }
+        return {
+            left: actualLeft,
+            top: actualTop,
+            width: actualWidth,
+            height: actualHeight
+        };
+    }
+
+    function getDevCoords(e) {
+        const vRect = getActualVideoRect();
+        const clientX = e.clientX !== undefined ? e.clientX : (e.touches && e.touches[0].clientX);
+        const clientY = e.clientY !== undefined ? e.clientY : (e.touches && e.touches[0].clientY);
+
+        let nx = (clientX - vRect.left) / vRect.width;
+        let ny = (clientY - vRect.top) / vRect.height;
+
+        nx = Math.max(0, Math.min(1, nx));
+        ny = Math.max(0, Math.min(1, ny));
+
+        return {
+            x: Math.round(nx * devWidth),
+            y: Math.round(ny * devHeight)
+        };
+    }
+
+    // Right-click: Scrcpy standard BACK
+    window.addEventListener('contextmenu', (e) => {
+        e.preventDefault();
+        if (ws && ws.readyState === WebSocket.OPEN) {
+            ws.send(JSON.stringify({ type: 'key', key: 'back' }));
+            showToast('⮌ 返回 (右键)');
+        }
+    });
+
+    // Middle-click: Scrcpy standard HOME
+    window.addEventListener('auxclick', (e) => {
+        if (e.button === 1) {
+            e.preventDefault();
+            if (ws && ws.readyState === WebSocket.OPEN) {
+                ws.send(JSON.stringify({ type: 'key', key: 'home' }));
+                showToast('⌂ 主屏 (中键)');
+            }
+        }
+    });
+
+    // Mouse wheel: fast persistent-socket touch scroll
+    let wheelThrottle = 0;
+    window.addEventListener('wheel', (e) => {
+        e.preventDefault();
+        const now = performance.now();
+        if (now - wheelThrottle < 70) return;
+        wheelThrottle = now;
+
+        const pt = getDevCoords(e);
+        if (ws && ws.readyState === WebSocket.OPEN) {
+            ws.send(JSON.stringify({
+                type: 'wheel',
+                x: pt.x,
+                y: pt.y,
+                deltaY: Math.round(e.deltaY),
+                sensitivity: sensitivity
+            }));
+        }
+    }, { passive: false });
+
+    // Real-time continuous touch stream (Android Scrcpy 1:1 style)
+    let isMouseDown = false;
+    let rawStartX = 0, rawStartY = 0;
+    let lastSentX = 0, lastSentY = 0;
+    let lastMoveSentTime = 0;
+    let movedPastDeadzone = false;
+
+    function clampPhoneCoords(x, y) {
+        return {
+            x: Math.max(0, Math.min(devWidth - 1, Math.round(x))),
+            y: Math.max(0, Math.min(devHeight - 1, Math.round(y)))
+        };
+    }
+
+    function sendTouch(action, x, y) {
+        if (ws && ws.readyState === WebSocket.OPEN) {
+            ws.send(JSON.stringify({ type: 'touch', action, x, y }));
+        }
+    }
+
+    video.addEventListener('mousedown', (e) => {
+        if (e.button !== 0) return;
+        isMouseDown = true;
+        movedPastDeadzone = false;
+        const pt = clampPhoneCoords(...Object.values(getDevCoords(e)));
+        rawStartX = pt.x;
+        rawStartY = pt.y;
+        lastSentX = pt.x;
+        lastSentY = pt.y;
+        lastMoveSentTime = performance.now();
+        sendTouch('down', pt.x, pt.y);
+    });
+
+    window.addEventListener('mousemove', (e) => {
+        if (!isMouseDown) return;
+        const pt = getDevCoords(e);
+        const dx = pt.x - rawStartX;
+        const dy = pt.y - rawStartY;
+        const dist = Math.hypot(dx, dy);
+
+        if (!movedPastDeadzone) {
+            if (dist < 8) return; // keep small hand tremor as clean tap
+            movedPastDeadzone = true;
+        }
+
+        const now = performance.now();
+        if (now - lastMoveSentTime < 10) return;
+
+        const mapped = clampPhoneCoords(rawStartX + dx * sensitivity, rawStartY + dy * sensitivity);
+        if (mapped.x === lastSentX && mapped.y === lastSentY) return;
+
+        lastMoveSentTime = now;
+        lastSentX = mapped.x;
+        lastSentY = mapped.y;
+        sendTouch('move', mapped.x, mapped.y);
+    });
+
+    function finishTouch(e) {
+        if (!isMouseDown) return;
+        isMouseDown = false;
+
+        if (!movedPastDeadzone || !e) {
+            sendTouch('up', rawStartX, rawStartY);
+            return;
+        }
+
+        const pt = getDevCoords(e);
+        const dx = pt.x - rawStartX;
+        const dy = pt.y - rawStartY;
+        const mapped = clampPhoneCoords(rawStartX + dx * sensitivity, rawStartY + dy * sensitivity);
+        if (mapped.x !== lastSentX || mapped.y !== lastSentY) {
+            sendTouch('move', mapped.x, mapped.y);
+        }
+        sendTouch('up', mapped.x, mapped.y);
+    }
+
+    window.addEventListener('mouseup', (e) => {
+        if (e.button !== 0) return;
+        finishTouch(e);
+    });
+    window.addEventListener('blur', () => finishTouch(null));
+
+    // Right Toolbar Actions
+    document.getElementById('btn-back').onclick = () => {
+        if (ws && ws.readyState === WebSocket.OPEN) {
+            ws.send(JSON.stringify({ type: 'key', key: 'back' }));
+            showToast('⮌ 返回');
+        }
+    };
+    document.getElementById('btn-home').onclick = () => {
+        if (ws && ws.readyState === WebSocket.OPEN) {
+            ws.send(JSON.stringify({ type: 'key', key: 'home' }));
+            showToast('⌂ 主屏幕');
+        }
+    };
+    document.getElementById('btn-task').onclick = () => {
+        if (ws && ws.readyState === WebSocket.OPEN) {
+            ws.send(JSON.stringify({ type: 'key', key: 'task' }));
+            showToast('▢ 最近任务');
+        }
+    };
+    document.getElementById('btn-vol-up').onclick = () => {
+        if (ws && ws.readyState === WebSocket.OPEN) {
+            ws.send(JSON.stringify({ type: 'key', key: 'vol_up' }));
+            showToast('🔊 音量+');
+        }
+    };
+    document.getElementById('btn-vol-down').onclick = () => {
+        if (ws && ws.readyState === WebSocket.OPEN) {
+            ws.send(JSON.stringify({ type: 'key', key: 'vol_down' }));
+            showToast('🔉 音量-');
+        }
+    };
+    document.getElementById('btn-power').onclick = () => {
+        if (ws && ws.readyState === WebSocket.OPEN) {
+            ws.send(JSON.stringify({ type: 'key', key: 'power' }));
+            showToast('⏻ 电源/亮灭屏');
+        }
+    };
+
+    // Cycle sensitivity
+    document.getElementById('btn-sens').onclick = () => {
+        sensIndex = (sensIndex + 1) % sensPresets.length;
+        sensitivity = sensPresets[sensIndex];
+        localStorage.setItem('hos_sens_idx', String(sensIndex));
+        sensLabel.innerText = `${sensitivity}x`;
+        showToast(sensitivity === 1.0 ? '⚡ 灵敏度: 1.0x (原生1:1跟手)' : `⚡ 触控灵敏度: ${sensitivity}x`);
+    };
+
+    // Fast instant screenshot from video frame
+    document.getElementById('btn-screenshot').onclick = () => {
+        if (!video.videoWidth || !video.videoHeight) {
+            showToast('视频未加载');
+            return;
+        }
+        const canvas = document.createElement('canvas');
+        canvas.width = video.videoWidth;
+        canvas.height = video.videoHeight;
+        const ctx = canvas.getContext('2d');
+        ctx.drawImage(video, 0, 0, canvas.width, canvas.height);
+        
+        const timestamp = new Date().toISOString().replace(/[:.]/g, '-').slice(0, 19);
+        const a = document.createElement('a');
+        a.download = `hos-screen-${timestamp}.png`;
+        a.href = canvas.toDataURL('image/png');
+        a.click();
+        showToast('📸 截图已保存');
+    };
+
+    document.getElementById('btn-idr').onclick = () => {
+        if (ws && ws.readyState === WebSocket.OPEN) {
+            initPlayer();
+            ws.send(JSON.stringify({ type: 'requestIdr' }));
+            showToast('已请求关键帧');
+        }
+    };
+    document.getElementById('btn-fullscreen').onclick = () => {
+        if (!document.fullscreenElement) {
+            document.documentElement.requestFullscreen();
+        } else {
+            document.exitFullscreen();
+        }
+    };
+
+    // Keyboard shortcuts
+    window.addEventListener('keydown', (e) => {
+        if (e.key === 'Escape') {
+            if (ws && ws.readyState === WebSocket.OPEN) ws.send(JSON.stringify({ type: 'key', key: 'back' }));
+        } else if (e.key === 'Home') {
+            if (ws && ws.readyState === WebSocket.OPEN) ws.send(JSON.stringify({ type: 'key', key: 'home' }));
+        }
+    });
+
+    connectWs();
+</script>
+</body>
+</html>
